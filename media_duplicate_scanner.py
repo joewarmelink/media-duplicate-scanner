@@ -105,6 +105,27 @@ class MediaDuplicateScanner:
         normalized = re.sub(r'\s+', ' ', normalized).strip()
         return normalized
     
+    def _extract_movie_title_from_folder(self, folder_name: str) -> str:
+        """Extract movie title from folder name, stopping at the year in parentheses."""
+        # Pattern to match year in parentheses: (YYYY)
+        year_pattern = r'\s*\(\d{4}\)'
+        
+        # Find the year pattern and extract everything before it
+        match = re.search(year_pattern, folder_name)
+        if match:
+            # Extract everything before the year pattern
+            title = folder_name[:match.start()].strip()
+        else:
+            # If no year found, use the entire folder name
+            title = folder_name.strip()
+        
+        # Clean up the title: remove special characters but keep spaces
+        # This preserves the original title structure while removing brackets, etc.
+        cleaned_title = re.sub(r'[\[\]{}()]', '', title)  # Remove brackets and parentheses
+        cleaned_title = re.sub(r'\s+', ' ', cleaned_title).strip()  # Normalize whitespace
+        
+        return cleaned_title
+    
     def _extract_year_from_path(self, path: Path) -> Optional[str]:
         """Extract year from path components."""
         # Look for year patterns in folder names (only parentheses)
@@ -174,11 +195,17 @@ class MediaDuplicateScanner:
                 # The movie folder is the first part of the relative path
                 if len(path_parts) >= 2:  # movie_folder/file
                     movie_folder = path_parts[0]
-                    title = self._normalize_title(movie_folder)
+                    
+                    # Extract the clean movie title (before the year)
+                    title = self._extract_movie_title_from_folder(movie_folder)
+                    
+                    # Extract the year
                     year = self._extract_year_from_path(path)
                     
                     if title and year:
-                        return (title, year)
+                        # Normalize the title for comparison (lowercase, no special chars)
+                        normalized_title = self._normalize_title(title)
+                        return (normalized_title, year)
             except ValueError:
                 # Path is not relative to this movie root, try next
                 continue
