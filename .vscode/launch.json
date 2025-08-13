@@ -45,6 +45,21 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }
+        },
+        {
+            "name": "Remote Debug - Duplicate Manager",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/duplicate_manager.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "args": [
+                "./media-dup-reports/duplicate_report_20250813_001629.json"
+            ],
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
         }
     ]
 }
