@@ -286,13 +286,29 @@ class DuplicateManager:
                 # Get user choice
                 while True:
                     try:
-                        choice = input("  Choose file to KEEP (1-2), 's' to skip, or 'q' to quit: ").strip().lower()
+                        choice = input(f"  Choose file to KEEP (1-2), 's' to skip, 'q' to quit, or ENTER for recommended ({recommended_index + 1}): ").strip().lower()
                         
                         if choice == 'q':
                             print("Exiting...")
                             return
                         elif choice == 's':
                             print("  ⏭️  Skipping this duplicate...")
+                            break
+                        elif choice == '' or choice == str(recommended_index + 1):
+                            # User pressed Enter or chose the recommended option
+                            keep_index = recommended_index
+                            file_to_delete = files[1] if keep_index == 0 else files[0]
+                            
+                            # Confirm deletion
+                            confirm = input(f"  🗑️  Delete: {file_to_delete['path']}? (y/N): ").strip().lower()
+                            if confirm == 'y':
+                                try:
+                                    Path(file_to_delete['path']).unlink()
+                                    print(f"  ✅ Deleted: {file_to_delete['path']}")
+                                except Exception as e:
+                                    print(f"  ❌ Error deleting file: {e}")
+                            else:
+                                print("  ⏭️  Deletion cancelled")
                             break
                         elif choice in ['1', '2']:
                             keep_index = int(choice) - 1
@@ -310,7 +326,7 @@ class DuplicateManager:
                                 print("  ⏭️  Deletion cancelled")
                             break
                         else:
-                            print("  ❌ Invalid choice. Please enter 1, 2, 's', or 'q'")
+                            print("  ❌ Invalid choice. Please enter 1, 2, 's', 'q', or press ENTER for recommended")
                     except KeyboardInterrupt:
                         print("\nExiting...")
                         return
@@ -350,13 +366,36 @@ class DuplicateManager:
             # Get user choice
             while True:
                 try:
-                    choice = input(f"  Choose file to KEEP (1-{len(files)}), 's' to skip, or 'q' to quit: ").strip().lower()
+                    choice = input(f"  Choose file to KEEP (1-{len(files)}), 's' to skip, 'q' to quit, or ENTER for highest quality (1): ").strip().lower()
                     
                     if choice == 'q':
                         print("Exiting...")
                         return
                     elif choice == 's':
                         print("  ⏭️  Skipping this duplicate...")
+                        break
+                    elif choice == '' or choice == '1':
+                        # User pressed Enter or chose the highest quality option
+                        keep_index = 0
+                        file_to_keep = files_sorted[keep_index]
+                        
+                        # Delete all other files
+                        files_to_delete = [f for f in files_sorted if f != file_to_keep]
+                        
+                        print(f"  🗑️  Will delete {len(files_to_delete)} files:")
+                        for file_info in files_to_delete:
+                            print(f"     {file_info['path']}")
+                        
+                        confirm = input("  Confirm deletion? (y/N): ").strip().lower()
+                        if confirm == 'y':
+                            for file_info in files_to_delete:
+                                try:
+                                    Path(file_info['path']).unlink()
+                                    print(f"  ✅ Deleted: {file_info['path']}")
+                                except Exception as e:
+                                    print(f"  ❌ Error deleting file: {e}")
+                        else:
+                            print("  ⏭️  Deletion cancelled")
                         break
                     elif choice.isdigit() and 1 <= int(choice) <= len(files):
                         keep_index = int(choice) - 1
@@ -381,7 +420,7 @@ class DuplicateManager:
                             print("  ⏭️  Deletion cancelled")
                         break
                     else:
-                        print(f"  ❌ Invalid choice. Please enter 1-{len(files)}, 's', or 'q'")
+                        print(f"  ❌ Invalid choice. Please enter 1-{len(files)}, 's', 'q', or press ENTER for highest quality")
                 except KeyboardInterrupt:
                     print("\nExiting...")
                     return
