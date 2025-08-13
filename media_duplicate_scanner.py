@@ -3,7 +3,7 @@
 Media Duplicate Scanner
 
 A Python utility to scan multiple media roots and report duplicate movies and TV episodes.
-Supports various file formats and provides detailed reporting with logging.
+Uses content-based matching (title/year for movies, show/season/episode for TV series).
 """
 
 import argparse
@@ -16,11 +16,11 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple, Optional
 
 
 class MediaDuplicateScanner:
-    """Scans media directories for duplicate content."""
+    """Scans media directories for duplicate content based on metadata."""
     
     # Common video file extensions
     VIDEO_EXTENSIONS = {
@@ -45,14 +45,18 @@ class MediaDuplicateScanner:
         # Setup logging
         self._setup_logging(log_level)
         
-        # Storage for duplicates
-        self.duplicates = defaultdict(list)
-        self.file_hashes = {}
+        # Storage for content-based duplicates
+        self.movie_groups = defaultdict(list)  # (title, year) -> [files]
+        self.tv_groups = defaultdict(list)     # (show, season, episode) -> [files]
+        
         self.scan_stats = {
             'total_files': 0,
             'video_files': 0,
             'audio_files': 0,
-            'duplicate_groups': 0,
+            'movie_files': 0,
+            'tv_files': 0,
+            'movie_duplicate_groups': 0,
+            'tv_duplicate_groups': 0,
             'total_duplicates': 0,
             'scan_time': 0
         }
@@ -90,54 +94,145 @@ class MediaDuplicateScanner:
         """Check if file is a media file based on extension."""
         return file_path.suffix.lower() in (self.VIDEO_EXTENSIONS | self.AUDIO_EXTENSIONS)
     
-    def _calculate_file_hash(self, file_path: Path, chunk_size: int = 8192) -> str:
-        """Calculate SHA-256 hash of file content."""
-        hash_sha256 = hashlib.sha256()
+    def _normalize_title(self, title: str) -> str:
+        """Normalize title for case-insensitive comparison."""
+        # Remove special characters and extra whitespace, convert to lowercase
+        normalized = re.sub(r'[^\w\s]', '', title.lower())
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        return normalized
+    
+    def _extract_year_from_path(self, path: Path) -> Optional[str]:
+        """Extract year from path components."""
+        # Look for year patterns in folder names
+        year_pattern = r'\((\d{4})\)|\.(\d{4})\.|\[(\d{4})\]'
         
-        try:
-            with open(file_path, 'rb') as f:
-                for chunk in iter(lambda: f.read(chunk_size), b''):
-                    hash_sha256.update(chunk)
-            return hash_sha256.hexdigest()
-        except Exception as e:
-            self.logger.error(f"Error calculating hash for {file_path}: {e}")
-            return None
+        # Check each component of the path
+        for component in path.parts:
+            match = re.search(year_pattern, component)
+            if match:
+                return match.group(1) or match.group(2) or match.group(3)
+        
+        return None
+    
+    def _extract_tv_episode_info(self, path: Path) -> Optional[Tuple[str, int, int]]:
+        """Extract TV show, season, and episode information from path."""
+        # Common TV episode patterns
+        episode_patterns = [
+            r'[Ss](\d{1,2})[Ee](\d{1,2})',  # S01E06, S1E6
+            r'(\d{1,2})x(\d{1,2})',         # 1x06, 01x06
+            r'Season\s*(\d{1,2})\s*Episode\s*(\d{1,2})',  # Season 1 Episode 6
+        ]
+        
+        path_str = str(path)
+        
+        for pattern in episode_patterns:
+            match = re.search(pattern, path_str, re.IGNORECASE)
+            if match:
+                season_num = int(match.group(1))
+                episode_num = int(match.group(2))
+                
+                # Extract show name from the path
+                show_name = self._extract_show_name(path)
+                if show_name:
+                    return (show_name, season_num, episode_num)
+        
+        return None
+    
+    def _extract_show_name(self, path: Path) -> Optional[str]:
+        """Extract TV show name from path."""
+        # Look for show name in folder structure
+        # Usually it's the parent folder of the season folder
+        
+        path_parts = list(path.parts)
+        
+        # Find season folder and get its parent
+        for i, part in enumerate(path_parts):
+            if re.search(r'[Ss]eason|S\d{1,2}', part, re.IGNORECASE):
+                if i > 0:
+                    return self._normalize_title(path_parts[i-1])
+        
+        # If no season folder found, try to extract from filename
+        filename = path.name
+        # Remove episode info from filename
+        clean_name = re.sub(r'[Ss]\d{1,2}[Ee]\d{1,2}|\d{1,2}x\d{1,2}', '', filename)
+        clean_name = re.sub(r'[^\w\s]', '', clean_name).strip()
+        
+        if clean_name:
+            return self._normalize_title(clean_name)
+        
+        return None
+    
+    def _extract_movie_info(self, path: Path) -> Optional[Tuple[str, str]]:
+        """Extract movie title and year from path."""
+        # Look for movie folder (usually contains the movie title)
+        path_parts = list(path.parts)
+        
+        # Try to find the movie folder (usually the parent of the file)
+        for i, part in enumerate(path_parts):
+            # Skip if it's a file extension
+            if '.' in part and part.split('.')[-1].lower() in self.VIDEO_EXTENSIONS:
+                continue
+            
+            # Check if this part looks like a movie title (contains year or is not a common folder name)
+            if re.search(r'\(\d{4}\)|\[\d{4}\]', part) or (
+                len(part) > 3 and 
+                not part.lower() in ['movies', 'movie', 'films', 'film', 'videos', 'video']
+            ):
+                title = self._normalize_title(part)
+                year = self._extract_year_from_path(path)
+                if title and year:
+                    return (title, year)
+        
+        # Fallback: try to extract from filename
+        filename = path.stem
+        title = self._normalize_title(filename)
+        year = self._extract_year_from_path(path)
+        
+        if title and year:
+            return (title, year)
+        
+        return None
     
     def _extract_media_info(self, file_path: Path) -> Dict:
-        """Extract basic media information from filename."""
-        filename = file_path.stem
-        extension = file_path.suffix.lower()
-        
-        # Try to extract title, year, and quality from filename
+        """Extract media information from file path."""
         info = {
             'filename': file_path.name,
-            'extension': extension,
+            'extension': file_path.suffix.lower(),
             'size': file_path.stat().st_size,
             'path': str(file_path),
-            'title': filename,
-            'year': None,
-            'quality': None,
-            'type': 'video' if extension in self.VIDEO_EXTENSIONS else 'audio'
+            'type': 'video' if file_path.suffix.lower() in self.VIDEO_EXTENSIONS else 'audio'
         }
         
-        # Common patterns for extracting year and quality
-        year_pattern = r'\((\d{4})\)|\.(\d{4})\.'
-        quality_pattern = r'(1080p|720p|480p|4K|HDRip|BRRip|WEBRip|BluRay|DVD)'
+        # Try to extract TV episode info first
+        tv_info = self._extract_tv_episode_info(file_path)
+        if tv_info:
+            show_name, season, episode = tv_info
+            info.update({
+                'media_type': 'tv',
+                'show_name': show_name,
+                'season': season,
+                'episode': episode,
+                'title': f"{show_name} S{season:02d}E{episode:02d}"
+            })
+            return info
         
-        # Extract year
-        year_match = re.search(year_pattern, filename)
-        if year_match:
-            info['year'] = year_match.group(1) or year_match.group(2)
+        # Try to extract movie info
+        movie_info = self._extract_movie_info(file_path)
+        if movie_info:
+            title, year = movie_info
+            info.update({
+                'media_type': 'movie',
+                'title': title,
+                'year': year
+            })
+            return info
         
-        # Extract quality
-        quality_match = re.search(quality_pattern, filename, re.IGNORECASE)
-        if quality_match:
-            info['quality'] = quality_match.group(1)
-        
+        # If we can't determine type, mark as unknown
+        info['media_type'] = 'unknown'
         return info
     
     def scan_directory(self, directory: Path) -> None:
-        """Scan a directory for media files and calculate hashes."""
+        """Scan a directory for media files and group by content."""
         self.logger.info(f"Scanning directory: {directory}")
         
         if not directory.exists():
@@ -153,33 +248,51 @@ class MediaDuplicateScanner:
                 else:
                     self.scan_stats['audio_files'] += 1
                 
-                # Calculate file hash
-                file_hash = self._calculate_file_hash(file_path)
-                if file_hash:
-                    media_info = self._extract_media_info(file_path)
-                    
-                    if file_hash in self.file_hashes:
-                        # Duplicate found
-                        self.duplicates[file_hash].append(media_info)
-                        self.scan_stats['total_duplicates'] += 1
-                        self.logger.debug(f"Duplicate found: {file_path.name}")
-                    else:
-                        # First occurrence
-                        self.file_hashes[file_hash] = media_info
-                        self.duplicates[file_hash] = [media_info]
+                # Extract media information
+                media_info = self._extract_media_info(file_path)
+                
+                if media_info['media_type'] == 'movie':
+                    self.scan_stats['movie_files'] += 1
+                    # Group by title and year
+                    key = (media_info['title'], media_info['year'])
+                    self.movie_groups[key].append(media_info)
+                    self.logger.debug(f"Movie found: {media_info['title']} ({media_info['year']})")
+                
+                elif media_info['media_type'] == 'tv':
+                    self.scan_stats['tv_files'] += 1
+                    # Group by show, season, and episode
+                    key = (media_info['show_name'], media_info['season'], media_info['episode'])
+                    self.tv_groups[key].append(media_info)
+                    self.logger.debug(f"TV found: {media_info['show_name']} S{media_info['season']:02d}E{media_info['episode']:02d}")
+                
+                else:
+                    self.logger.debug(f"Unknown media type: {file_path}")
     
     def find_duplicates(self) -> Dict:
-        """Find and organize duplicate files."""
-        duplicate_groups = {}
+        """Find and organize duplicate content."""
+        duplicates = {
+            'movies': {},
+            'tv_series': {}
+        }
         
-        for file_hash, files in self.duplicates.items():
+        # Find movie duplicates
+        for (title, year), files in self.movie_groups.items():
             if len(files) > 1:
-                duplicate_groups[file_hash] = files
-                self.scan_stats['duplicate_groups'] += 1
+                duplicates['movies'][f"{title} ({year})"] = files
+                self.scan_stats['movie_duplicate_groups'] += 1
+                self.scan_stats['total_duplicates'] += len(files)
         
-        return duplicate_groups
+        # Find TV duplicates
+        for (show, season, episode), files in self.tv_groups.items():
+            if len(files) > 1:
+                key = f"{show} S{season:02d}E{episode:02d}"
+                duplicates['tv_series'][key] = files
+                self.scan_stats['tv_duplicate_groups'] += 1
+                self.scan_stats['total_duplicates'] += len(files)
+        
+        return duplicates
     
-    def generate_report(self, duplicate_groups: Dict) -> None:
+    def generate_report(self, duplicates: Dict) -> None:
         """Generate detailed report of duplicates."""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         report_file = self.output_dir / f'duplicate_report_{timestamp}.json'
@@ -189,7 +302,7 @@ class MediaDuplicateScanner:
         report_data = {
             'scan_timestamp': datetime.now().isoformat(),
             'scan_stats': self.scan_stats,
-            'duplicate_groups': duplicate_groups
+            'duplicates': duplicates
         }
         
         with open(report_file, 'w', encoding='utf-8') as f:
@@ -203,27 +316,43 @@ class MediaDuplicateScanner:
             f.write(f"Total files scanned: {self.scan_stats['total_files']}\n")
             f.write(f"Video files: {self.scan_stats['video_files']}\n")
             f.write(f"Audio files: {self.scan_stats['audio_files']}\n")
-            f.write(f"Duplicate groups found: {self.scan_stats['duplicate_groups']}\n")
+            f.write(f"Movie files: {self.scan_stats['movie_files']}\n")
+            f.write(f"TV files: {self.scan_stats['tv_files']}\n")
+            f.write(f"Movie duplicate groups: {self.scan_stats['movie_duplicate_groups']}\n")
+            f.write(f"TV duplicate groups: {self.scan_stats['tv_duplicate_groups']}\n")
             f.write(f"Total duplicate files: {self.scan_stats['total_duplicates']}\n\n")
             
-            if duplicate_groups:
-                f.write("DUPLICATE GROUPS:\n")
+            # Movie duplicates
+            if duplicates['movies']:
+                f.write("MOVIE DUPLICATES:\n")
                 f.write("-" * 20 + "\n\n")
                 
-                for i, (file_hash, files) in enumerate(duplicate_groups.items(), 1):
-                    f.write(f"Group {i} (Hash: {file_hash[:16]}...)\n")
+                for i, (title, files) in enumerate(duplicates['movies'].items(), 1):
+                    f.write(f"Movie Group {i}: {title}\n")
                     f.write(f"Files ({len(files)}):\n")
                     
                     for j, file_info in enumerate(files, 1):
                         f.write(f"  {j}. {file_info['filename']}\n")
                         f.write(f"     Path: {file_info['path']}\n")
                         f.write(f"     Size: {file_info['size']:,} bytes\n")
-                        if file_info['year']:
-                            f.write(f"     Year: {file_info['year']}\n")
-                        if file_info['quality']:
-                            f.write(f"     Quality: {file_info['quality']}\n")
-                        f.write("\n")
-            else:
+                        f.write(f"     Format: {file_info['extension']}\n\n")
+            
+            # TV duplicates
+            if duplicates['tv_series']:
+                f.write("TV SERIES DUPLICATES:\n")
+                f.write("-" * 20 + "\n\n")
+                
+                for i, (episode, files) in enumerate(duplicates['tv_series'].items(), 1):
+                    f.write(f"TV Group {i}: {episode}\n")
+                    f.write(f"Files ({len(files)}):\n")
+                    
+                    for j, file_info in enumerate(files, 1):
+                        f.write(f"  {j}. {file_info['filename']}\n")
+                        f.write(f"     Path: {file_info['path']}\n")
+                        f.write(f"     Size: {file_info['size']:,} bytes\n")
+                        f.write(f"     Format: {file_info['extension']}\n\n")
+            
+            if not duplicates['movies'] and not duplicates['tv_series']:
                 f.write("No duplicates found!\n")
         
         self.logger.info(f"Report generated: {report_file}")
@@ -232,7 +361,8 @@ class MediaDuplicateScanner:
         # Print summary to console
         print(f"\nScan completed!")
         print(f"Total files: {self.scan_stats['total_files']}")
-        print(f"Duplicate groups: {self.scan_stats['duplicate_groups']}")
+        print(f"Movie duplicate groups: {self.scan_stats['movie_duplicate_groups']}")
+        print(f"TV duplicate groups: {self.scan_stats['tv_duplicate_groups']}")
         print(f"Total duplicates: {self.scan_stats['total_duplicates']}")
         print(f"Reports saved to: {self.output_dir}")
 
@@ -240,13 +370,13 @@ class MediaDuplicateScanner:
 def main():
     """Main entry point for the media duplicate scanner."""
     parser = argparse.ArgumentParser(
-        description='Scan media directories for duplicate content',
+        description='Scan media directories for duplicate content based on metadata',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python media_duplicate_scanner.py /path/to/media1 /path/to/media2
+  python media_duplicate_scanner.py /media/4TB-WD2/MOVIES /media/16TB-HM/MOVIES
   python media_duplicate_scanner.py --log-level DEBUG --output-dir ./reports /path/to/media
-  python media_duplicate_scanner.py --log-level INFO --output-dir ./media-dup-reports --log-dir ./media-dup-reports/logs /path/to/media1 /path/to/media2
+  python media_duplicate_scanner.py --log-level INFO --output-dir ./media-dup-reports --log-dir ./media-dup-reports/logs /media/4TB-WD2/MOVIES /media/16TB-HM/MOVIES
         """
     )
     

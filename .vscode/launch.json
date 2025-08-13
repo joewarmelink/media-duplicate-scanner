@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Remote Debug - Media Scanner",
+            "name": "Remote Debug - Media Scanner (Multiple Roots)",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/media_duplicate_scanner.py",
@@ -15,7 +15,8 @@
                 "./media-dup-reports",
                 "--log-dir",
                 "./media-dup-reports/logs",
-                "/path/to/remote/media/directory"
+                "/media/4TB-WD2/MOVIES",
+                "/media/16TB-HM/MOVIES"
             ],
             "justMyCode": false,
             "env": {

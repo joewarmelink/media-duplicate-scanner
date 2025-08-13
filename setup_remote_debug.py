@@ -116,7 +116,7 @@ def generate_debug_config():
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Remote Debug - Media Scanner",
+            "name": "Remote Debug - Media Scanner (Multiple Roots)",
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/media_duplicate_scanner.py",
@@ -129,7 +129,10 @@ def generate_debug_config():
                 "./media-dup-reports",
                 "--log-dir",
                 "./media-dup-reports/logs",
-                "/path/to/your/media/directory"
+                "/media/drive1/movies",
+                "/media/drive2/movies",
+                "/home/joe/videos",
+                "/mnt/external/movies"
             ],
             "justMyCode": false,
             "env": {
