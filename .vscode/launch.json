@@ -15,8 +15,12 @@
                 "./media-dup-reports",
                 "--log-dir",
                 "./media-dup-reports/logs",
+                "--movie-roots",
                 "/media/4TB-WD2/MOVIES",
-                "/media/16TB-HM/MOVIES"
+                "/media/16TB-HM/MOVIES",
+                "--tv-roots",
+                "/media/4TB-WD2/TV",
+                "/media/16TB-HM/TV"
             ],
             "justMyCode": false,
             "env": {

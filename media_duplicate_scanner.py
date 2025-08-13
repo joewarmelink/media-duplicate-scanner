@@ -33,7 +33,7 @@ class MediaDuplicateScanner:
         '.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma', '.m4a'
     }
     
-    def __init__(self, log_level: str = 'INFO', output_dir: str = './media-dup-reports', log_dir: str = './media-dup-reports/logs'):
+    def __init__(self, log_level: str = 'INFO', output_dir: str = './media-dup-reports', log_dir: str = './media-dup-reports/logs', movie_roots: List[str] = None, tv_roots: List[str] = None):
         """Initialize the scanner with configuration."""
         self.output_dir = Path(output_dir)
         self.log_dir = Path(log_dir)
@@ -44,6 +44,10 @@ class MediaDuplicateScanner:
         
         # Setup logging
         self._setup_logging(log_level)
+        
+        # Media root directories
+        self.movie_roots = [Path(root) for root in (movie_roots or [])]
+        self.tv_roots = [Path(root) for root in (tv_roots or [])]
         
         # Storage for content-based duplicates
         self.movie_groups = defaultdict(list)  # (title, year) -> [files]
@@ -103,93 +107,81 @@ class MediaDuplicateScanner:
     
     def _extract_year_from_path(self, path: Path) -> Optional[str]:
         """Extract year from path components."""
-        # Look for year patterns in folder names
-        year_pattern = r'\((\d{4})\)|\.(\d{4})\.|\[(\d{4})\]'
+        # Look for year patterns in folder names (only parentheses)
+        year_pattern = r'\((\d{4})\)'
         
         # Check each component of the path
         for component in path.parts:
             match = re.search(year_pattern, component)
             if match:
-                return match.group(1) or match.group(2) or match.group(3)
+                return match.group(1)
         
         return None
     
     def _extract_tv_episode_info(self, path: Path) -> Optional[Tuple[str, int, int]]:
         """Extract TV show, season, and episode information from path."""
-        # Common TV episode patterns
-        episode_patterns = [
-            r'[Ss](\d{1,2})[Ee](\d{1,2})',  # S01E06, S1E6
-            r'(\d{1,2})x(\d{1,2})',         # 1x06, 01x06
-            r'Season\s*(\d{1,2})\s*Episode\s*(\d{1,2})',  # Season 1 Episode 6
-        ]
+        # TV episode pattern (SxxExx format only)
+        episode_pattern = r'[Ss](\d{1,2})[Ee](\d{1,2})'  # S01E06, S1E6
         
         path_str = str(path)
         
-        for pattern in episode_patterns:
-            match = re.search(pattern, path_str, re.IGNORECASE)
-            if match:
-                season_num = int(match.group(1))
-                episode_num = int(match.group(2))
-                
-                # Extract show name from the path
-                show_name = self._extract_show_name(path)
-                if show_name:
-                    return (show_name, season_num, episode_num)
+        match = re.search(episode_pattern, path_str, re.IGNORECASE)
+        if match:
+            season_num = int(match.group(1))
+            episode_num = int(match.group(2))
+            
+            # Extract show name from the path
+            show_name = self._extract_show_name(path)
+            if show_name:
+                return (show_name, season_num, episode_num)
         
         return None
     
     def _extract_show_name(self, path: Path) -> Optional[str]:
         """Extract TV show name from path."""
-        # Look for show name in folder structure
-        # Usually it's the parent folder of the season folder
+        # For TV roots, the structure is: /tv_root/show_name/season_folder/episode_file
+        # The show name is the first folder under the TV root
         
-        path_parts = list(path.parts)
-        
-        # Find season folder and get its parent
-        for i, part in enumerate(path_parts):
-            if re.search(r'[Ss]eason|S\d{1,2}', part, re.IGNORECASE):
-                if i > 0:
-                    return self._normalize_title(path_parts[i-1])
-        
-        # If no season folder found, try to extract from filename
-        filename = path.name
-        # Remove episode info from filename
-        clean_name = re.sub(r'[Ss]\d{1,2}[Ee]\d{1,2}|\d{1,2}x\d{1,2}', '', filename)
-        clean_name = re.sub(r'[^\w\s]', '', clean_name).strip()
-        
-        if clean_name:
-            return self._normalize_title(clean_name)
+        # Find which TV root this path belongs to
+        for tv_root in self.tv_roots:
+            try:
+                # Get the relative path from the TV root
+                relative_path = path.relative_to(tv_root)
+                path_parts = relative_path.parts
+                
+                # The show name is the first part of the relative path
+                if len(path_parts) >= 2:  # show_name/season_folder/file
+                    show_name = path_parts[0]
+                    return self._normalize_title(show_name)
+            except ValueError:
+                # Path is not relative to this TV root, try next
+                continue
         
         return None
     
     def _extract_movie_info(self, path: Path) -> Optional[Tuple[str, str]]:
         """Extract movie title and year from path."""
-        # Look for movie folder (usually contains the movie title)
-        path_parts = list(path.parts)
+        # For movie roots, the structure is: /movie_root/movie_folder/movie_file
+        # The movie folder name contains the title and year
         
-        # Try to find the movie folder (usually the parent of the file)
-        for i, part in enumerate(path_parts):
-            # Skip if it's a file extension
-            if '.' in part and part.split('.')[-1].lower() in self.VIDEO_EXTENSIONS:
+        # Find which movie root this path belongs to
+        for movie_root in self.movie_roots:
+            try:
+                # Get the relative path from the movie root
+                relative_path = path.relative_to(movie_root)
+                path_parts = relative_path.parts
+                
+                # The movie folder is the first part of the relative path
+                if len(path_parts) >= 2:  # movie_folder/file
+                    movie_folder = path_parts[0]
+                    title = self._normalize_title(movie_folder)
+                    year = self._extract_year_from_path(path)
+                    
+                    if title and year:
+                        return (title, year)
+            except ValueError:
+                # Path is not relative to this movie root, try next
                 continue
-            
-            # Check if this part looks like a movie title (contains year or is not a common folder name)
-            if re.search(r'\(\d{4}\)|\[\d{4}\]', part) or (
-                len(part) > 3 and 
-                not part.lower() in ['movies', 'movie', 'films', 'film', 'videos', 'video']
-            ):
-                title = self._normalize_title(part)
-                year = self._extract_year_from_path(path)
-                if title and year:
-                    return (title, year)
-        
-        # Fallback: try to extract from filename
-        filename = path.stem
-        title = self._normalize_title(filename)
-        year = self._extract_year_from_path(path)
-        
-        if title and year:
-            return (title, year)
         
         return None
     
@@ -231,42 +223,63 @@ class MediaDuplicateScanner:
         info['media_type'] = 'unknown'
         return info
     
-    def scan_directory(self, directory: Path) -> None:
-        """Scan a directory for media files and group by content."""
-        self.logger.info(f"Scanning directory: {directory}")
+    def scan_directories(self) -> None:
+        """Scan all configured movie and TV directories."""
+        # Scan movie roots
+        for movie_root in self.movie_roots:
+            self.logger.info(f"Scanning movie directory: {movie_root}")
+            if not movie_root.exists():
+                self.logger.error(f"Movie directory does not exist: {movie_root}")
+                continue
+            
+            for file_path in movie_root.rglob('*'):
+                if file_path.is_file() and self._is_media_file(file_path):
+                    self.scan_stats['total_files'] += 1
+                    
+                    if file_path.suffix.lower() in self.VIDEO_EXTENSIONS:
+                        self.scan_stats['video_files'] += 1
+                    else:
+                        self.scan_stats['audio_files'] += 1
+                    
+                    # Extract media information
+                    media_info = self._extract_media_info(file_path)
+                    
+                    if media_info['media_type'] == 'movie':
+                        self.scan_stats['movie_files'] += 1
+                        # Group by title and year
+                        key = (media_info['title'], media_info['year'])
+                        self.movie_groups[key].append(media_info)
+                        self.logger.debug(f"Movie found: {media_info['title']} ({media_info['year']})")
+                    else:
+                        self.logger.debug(f"Non-movie file in movie root: {file_path}")
         
-        if not directory.exists():
-            self.logger.error(f"Directory does not exist: {directory}")
-            return
-        
-        for file_path in directory.rglob('*'):
-            if file_path.is_file() and self._is_media_file(file_path):
-                self.scan_stats['total_files'] += 1
-                
-                if file_path.suffix.lower() in self.VIDEO_EXTENSIONS:
-                    self.scan_stats['video_files'] += 1
-                else:
-                    self.scan_stats['audio_files'] += 1
-                
-                # Extract media information
-                media_info = self._extract_media_info(file_path)
-                
-                if media_info['media_type'] == 'movie':
-                    self.scan_stats['movie_files'] += 1
-                    # Group by title and year
-                    key = (media_info['title'], media_info['year'])
-                    self.movie_groups[key].append(media_info)
-                    self.logger.debug(f"Movie found: {media_info['title']} ({media_info['year']})")
-                
-                elif media_info['media_type'] == 'tv':
-                    self.scan_stats['tv_files'] += 1
-                    # Group by show, season, and episode
-                    key = (media_info['show_name'], media_info['season'], media_info['episode'])
-                    self.tv_groups[key].append(media_info)
-                    self.logger.debug(f"TV found: {media_info['show_name']} S{media_info['season']:02d}E{media_info['episode']:02d}")
-                
-                else:
-                    self.logger.debug(f"Unknown media type: {file_path}")
+        # Scan TV roots
+        for tv_root in self.tv_roots:
+            self.logger.info(f"Scanning TV directory: {tv_root}")
+            if not tv_root.exists():
+                self.logger.error(f"TV directory does not exist: {tv_root}")
+                continue
+            
+            for file_path in tv_root.rglob('*'):
+                if file_path.is_file() and self._is_media_file(file_path):
+                    self.scan_stats['total_files'] += 1
+                    
+                    if file_path.suffix.lower() in self.VIDEO_EXTENSIONS:
+                        self.scan_stats['video_files'] += 1
+                    else:
+                        self.scan_stats['audio_files'] += 1
+                    
+                    # Extract media information
+                    media_info = self._extract_media_info(file_path)
+                    
+                    if media_info['media_type'] == 'tv':
+                        self.scan_stats['tv_files'] += 1
+                        # Group by show, season, and episode
+                        key = (media_info['show_name'], media_info['season'], media_info['episode'])
+                        self.tv_groups[key].append(media_info)
+                        self.logger.debug(f"TV found: {media_info['show_name']} S{media_info['season']:02d}E{media_info['episode']:02d}")
+                    else:
+                        self.logger.debug(f"Non-TV file in TV root: {file_path}")
     
     def find_duplicates(self) -> Dict:
         """Find and organize duplicate content."""
@@ -374,16 +387,22 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python media_duplicate_scanner.py /media/4TB-WD2/MOVIES /media/16TB-HM/MOVIES
-  python media_duplicate_scanner.py --log-level DEBUG --output-dir ./reports /path/to/media
-  python media_duplicate_scanner.py --log-level INFO --output-dir ./media-dup-reports --log-dir ./media-dup-reports/logs /media/4TB-WD2/MOVIES /media/16TB-HM/MOVIES
+  python media_duplicate_scanner.py --movie-roots /media/4TB-WD2/MOVIES /media/16TB-HM/MOVIES --tv-roots /media/4TB-WD2/TV /media/16TB-HM/TV
+  python media_duplicate_scanner.py --log-level DEBUG --movie-roots /path/to/movies --tv-roots /path/to/tv
+  python media_duplicate_scanner.py --log-level INFO --movie-roots /media/4TB-WD2/MOVIES /media/16TB-HM/MOVIES --tv-roots /media/4TB-WD2/TV /media/16TB-HM/TV
         """
     )
     
     parser.add_argument(
-        'directories',
+        '--movie-roots',
         nargs='+',
-        help='Directories to scan for media files'
+        help='Movie root directories to scan'
+    )
+    
+    parser.add_argument(
+        '--tv-roots',
+        nargs='+',
+        help='TV root directories to scan'
     )
     
     parser.add_argument(
@@ -407,19 +426,24 @@ Examples:
     
     args = parser.parse_args()
     
+    # Validate arguments
+    if not args.movie_roots and not args.tv_roots:
+        parser.error("At least one of --movie-roots or --tv-roots must be specified")
+    
     # Initialize scanner
     scanner = MediaDuplicateScanner(
         log_level=args.log_level,
         output_dir=args.output_dir,
-        log_dir=args.log_dir
+        log_dir=args.log_dir,
+        movie_roots=args.movie_roots,
+        tv_roots=args.tv_roots
     )
     
     start_time = datetime.now()
     
     try:
-        # Scan each directory
-        for directory in args.directories:
-            scanner.scan_directory(Path(directory))
+        # Scan all directories
+        scanner.scan_directories()
         
         # Find duplicates
         duplicate_groups = scanner.find_duplicates()
