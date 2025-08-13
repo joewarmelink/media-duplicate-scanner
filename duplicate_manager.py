@@ -128,6 +128,28 @@ class DuplicateManager:
             
             print(f"  📊 Total episodes across all roots: {total_episodes}")
     
+    def display_single_series_overview(self, show_name: str, show_data: Dict):
+        """Display overview for a single TV series."""
+        print(f"\n📺 {show_name} - Series Distribution")
+        print("-" * 50)
+        
+        total_episodes = 0
+        for root in sorted(show_data.keys()):
+            root_episodes = 0
+            print(f"  📁 {root}:")
+            
+            for season in sorted(show_data[root].keys(), key=int):
+                episodes = show_data[root][season]
+                episode_count = len(episodes)
+                root_episodes += episode_count
+                print(f"    Season {season}: {episode_count} episodes")
+            
+            total_episodes += root_episodes
+            print(f"    Total: {root_episodes} episodes")
+        
+        print(f"  📊 Total episodes across all roots: {total_episodes}")
+        print()
+    
     def get_recommendation(self, files: List[Dict], series_analysis: Dict, show_name: str, season: int) -> Tuple[int, str]:
         """Get recommendation for which file to keep."""
         if len(files) != 2:  # Only handle pairs for now
@@ -202,9 +224,6 @@ class DuplicateManager:
         # Analyze series distribution
         series_analysis = self.analyze_tv_series_distribution()
         
-        # Display overview
-        self.display_series_overview(series_analysis)
-        
         print("\n" + "="*80)
         print("PROCESSING TV DUPLICATES")
         print("="*80)
@@ -234,6 +253,9 @@ class DuplicateManager:
         for show_name in sorted(show_episodes.keys()):
             print(f"\n🎬 Processing: {show_name}")
             print("-" * 60)
+            
+            # Display series distribution for this specific show
+            self.display_single_series_overview(show_name, series_analysis[show_name])
             
             for season, episode, files, episode_key in show_episodes[show_name]:
                 # Verify files still exist
