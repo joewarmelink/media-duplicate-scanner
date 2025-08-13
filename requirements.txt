@@ -1,0 +1,3 @@
+﻿# No external dependencies required - uses only Python standard library modules
+# Built-in modules used: argparse, hashlib, json, logging, os, re, sys, 
+# collections, datetime, pathlib, typing

@@ -1,0 +1,39 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Remote Debug - Media Scanner",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/media_duplicate_scanner.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "args": [
+                "--log-level",
+                "DEBUG",
+                "--output-dir",
+                "./media-dup-reports",
+                "--log-dir",
+                "./media-dup-reports/logs",
+                "/path/to/remote/media/directory"
+            ],
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Remote Debug - Custom Args",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/media_duplicate_scanner.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "args": [],
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        }
+    ]
+}
